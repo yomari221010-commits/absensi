@@ -21,11 +21,27 @@ import { LocationMap } from "./LocationMapLoader";
 import { GeoLocationData, formatLatitude, formatLongitude, getCurrentLocation } from "@/lib/geolocation";
 import {
   fetchAttendanceHistory,
-  fetchTodayAttendance,
   fetchAttendanceSummary,
   submitAttendance,
   fetchNotifications,
+  fetchLeaves,
+  createLeave,
+  fetchReimbursements,
+  createReimbursement,
+  fetchAdminDashboard,
+  fetchAdminTodayAttendance,
+  updateLeaveDecision,
+  type AdminDashboard,
+  type AdminAttendanceRow,
 } from "@/lib/attendance-api";
+import {
+  EMPTY_WEEKLY_CHART,
+  EMPTY_LEAVE_WEEKLY,
+  EMPTY_MONTHLY_DATA,
+  type LeaveRequest,
+  type LeaveType,
+  type Reimburse,
+} from "@/lib/ui-mappers";
 import {
   loginApi,
   fetchProfile,
@@ -52,20 +68,20 @@ type Screen =
   | "reimbursement" | "reimbursement-form"
   | "leave" | "leave-form";
 
-interface ReimItem { desc: string; amount: number }
-interface Reimburse {
-  id: string; date: string; purpose: string; project: string;
-  items: ReimItem[]; total: number; advance: number; balance: number;
-  status: "draft" | "in-progress" | "done";
-  decision?: "approved" | "rejected"; decisionReason?: string;
-}
-type LeaveType = "Sakit" | "Izin" | "Cuti" | "WFH" | "Dinas" | "Izin Mendadak" | "Cuti Khusus";
-interface LeaveRequest {
-  id: string; type: LeaveType;
-  startDate: string; endDate: string; duration: number;
-  reason: string; attachment?: string; notes?: string;
-  status: "draft" | "pending" | "approved" | "rejected";
-  createdAt: string; decisionReason?: string;
+type NotifItem = { type: string; title: string; body: string; time: string; read: boolean };
+
+const LEAVE_TYPE_TO_API: Record<LeaveType, string> = {
+  Sakit: "sakit",
+  Izin: "izin",
+  Cuti: "cuti",
+  WFH: "wfh",
+  Dinas: "dinas",
+  "Izin Mendadak": "izin",
+  "Cuti Khusus": "cuti",
+};
+
+function parseReqId(id: string) {
+  return Number(id.replace(/^REQ-/, ""));
 }
 
 // ── Leave config ───────────────────────────────────────────────
@@ -85,75 +101,6 @@ const leaveStatusCfg = {
   approved: { label: "Disetujui", color: "#10b981", bg: "rgba(16,185,129,0.15)"  },
   rejected: { label: "Ditolak",   color: "#ef4444", bg: "rgba(239,68,68,0.15)"   },
 };
-
-// ── Static data ────────────────────────────────────────────────
-const weeklyData = [
-  { day: "Sen", hadir: 95, telat: 5 }, { day: "Sel", hadir: 88, telat: 12 },
-  { day: "Rab", hadir: 92, telat: 8 }, { day: "Kam", hadir: 97, telat: 3 },
-  { day: "Jum", hadir: 85, telat: 15 }, { day: "Sab", hadir: 60, telat: 10 },
-];
-const monthlyData = [
-  { month: "Jan", value: 94 }, { month: "Feb", value: 88 }, { month: "Mar", value: 91 },
-  { month: "Apr", value: 96 }, { month: "Mei", value: 89 }, { month: "Jun", value: 93 },
-  { month: "Jul", value: 97 },
-];
-const leaveWeeklyData = [
-  { day: "Sen", sakit: 2, izin: 1, cuti: 0, wfh: 3 },
-  { day: "Sel", sakit: 1, izin: 2, cuti: 1, wfh: 2 },
-  { day: "Rab", sakit: 3, izin: 0, cuti: 2, wfh: 4 },
-  { day: "Kam", sakit: 0, izin: 1, cuti: 1, wfh: 2 },
-  { day: "Jum", sakit: 2, izin: 3, cuti: 0, wfh: 5 },
-];
-const employeeData = [
-  { name: "Budi Santoso", role: "Frontend Dev",    checkIn: "08:45", checkOut: "17:30", status: "hadir" },
-  { name: "Sari Dewi",    role: "Product Manager", checkIn: "09:15", checkOut: "17:00", status: "telat" },
-  { name: "Andi Pratama", role: "Backend Dev",     checkIn: "-",     checkOut: "-",     status: "izin"  },
-  { name: "Rizki Hasan",  role: "UI Designer",     checkIn: "08:30", checkOut: "17:45", status: "hadir" },
-  { name: "Maya Putri",   role: "QA Engineer",     checkIn: "08:55", checkOut: "-",     status: "hadir" },
-];
-const notifData = [
-  { type: "reminder",     title: "Jangan lupa absensi!",    body: "Anda belum melakukan absensi hari ini.",                              time: "08:00",    read: false },
-  { type: "approval",     title: "Izin Sakit Disetujui",    body: "Permohonan Sakit Anda 3–5 Jul telah disetujui oleh HR.",             time: "Kemarin",  read: true  },
-  { type: "announcement", title: "Meeting All Hands",       body: "Reminder: Meeting all hands besok pukul 10:00 WIB.",                 time: "2 hari lalu", read: true },
-  { type: "reminder",     title: "Reimbursement Disetujui", body: "Pengajuan RMB-2026-003 senilai Rp 3.200.000 telah disetujui.",       time: "3 hari lalu", read: false },
-];
-const teamLeaves = [
-  { name: "Sari Dewi",    type: "Cuti",  start: "07 Jul", end: "11 Jul", status: "pending"  },
-  { name: "Andi Pratama", type: "Sakit", start: "03 Jul", end: "04 Jul", status: "approved" },
-  { name: "Rizki Hasan",  type: "WFH",  start: "07 Jul", end: "07 Jul", status: "approved" },
-];
-
-const initReim: Reimburse[] = [
-  { id: "RMB-2026-001", date: "03 Jul 2026", purpose: "Perjalanan Dinas Surabaya",   project: "Project Alpha",
-    items: [{ desc: "Tiket pesawat PP", amount: 1800000 }, { desc: "Hotel 2 malam", amount: 500000 }, { desc: "Transport lokal", amount: 200000 }],
-    total: 2500000, advance: 1000000, balance: 1500000, status: "draft" },
-  { id: "RMB-2026-002", date: "01 Jul 2026", purpose: "Meeting Client Jakarta",       project: "Project Beta",
-    items: [{ desc: "Makan siang client", amount: 650000 }, { desc: "Parkir & tol", amount: 200000 }],
-    total: 850000, advance: 0, balance: 850000, status: "in-progress" },
-  { id: "RMB-2026-003", date: "25 Jun 2026", purpose: "Training & Sertifikasi AWS",  project: "Internal Dev",
-    items: [{ desc: "Biaya sertifikasi", amount: 2500000 }, { desc: "Buku referensi", amount: 450000 }, { desc: "Transportasi", amount: 250000 }],
-    total: 3200000, advance: 1500000, balance: 1700000, status: "done", decision: "approved" },
-  { id: "RMB-2026-004", date: "20 Jun 2026", purpose: "Pembelian Peralatan Kerja",   project: "Internal",
-    items: [{ desc: "Mechanical keyboard", amount: 450000 }, { desc: "Mouse wireless", amount: 225000 }],
-    total: 675000, advance: 0, balance: 675000, status: "done", decision: "rejected", decisionReason: "Tidak termasuk dalam budget peralatan Q3 2026." },
-];
-const initLeaves: LeaveRequest[] = [
-  { id: "REQ-2026-001", type: "Sakit", startDate: "03 Jul 2026", endDate: "05 Jul 2026", duration: 3,
-    reason: "Demam tinggi disertai batuk dan flu", attachment: "surat_dokter.pdf",
-    status: "approved", createdAt: "03 Jul 2026" },
-  { id: "REQ-2026-002", type: "WFH",  startDate: "07 Jul 2026", endDate: "07 Jul 2026", duration: 1,
-    reason: "Menunggu teknisi perbaikan jaringan internet di rumah",
-    status: "pending", createdAt: "06 Jul 2026" },
-  { id: "REQ-2026-003", type: "Cuti", startDate: "14 Jul 2026", endDate: "18 Jul 2026", duration: 5,
-    reason: "Liburan keluarga ke Bali untuk merayakan ulang tahun pernikahan",
-    status: "pending", createdAt: "01 Jul 2026" },
-  { id: "REQ-2026-004", type: "Izin", startDate: "28 Jun 2026", endDate: "28 Jun 2026", duration: 1,
-    reason: "Keperluan keluarga mendesak",
-    status: "rejected", decisionReason: "Sedang ada deadline project penting. Mohon reschedule.", createdAt: "27 Jun 2026" },
-  { id: "REQ-2026-005", type: "Dinas", startDate: "20 Jul 2026", endDate: "22 Jul 2026", duration: 3,
-    reason: "Kunjungan klien ke Surabaya untuk demo produk",
-    status: "draft", createdAt: "03 Jul 2026" },
-];
 
 const attendStatusCfg = {
   hadir:  { color: "text-emerald-400", bg: "bg-emerald-400/20", label: "Hadir" },
@@ -181,7 +128,7 @@ export default function PayrollInApp() {
   const [loginError, setLoginError]   = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<PublicUser | null>(null);
   const [attSummary, setAttSummary]   = useState({ hadir: 0, telat: 0, izin: 0, cuti: 0, sakit: 0, absent: 0, wfh: 0 });
-  const [notifList, setNotifList]     = useState(notifData);
+  const [notifList, setNotifList]     = useState<NotifItem[]>([]);
   const [now, setNow]                 = useState(new Date());
   const [activeTab, setActiveTab]     = useState("home");
   const [histFilter, setHistFilter]   = useState<HistFilter>("weekly");
@@ -201,18 +148,21 @@ export default function PayrollInApp() {
   const [searchQ, setSearchQ]         = useState("");
   const [prevScreen, setPrevScreen]   = useState<Screen>("home");
   // Reimburse
-  const [reimList, setReimList]       = useState<Reimburse[]>(initReim);
+  const [reimList, setReimList]       = useState<Reimburse[]>([]);
   const [reimFilter, setReimFilter]   = useState<"all"|"draft"|"in-progress"|"done">("all");
   const [expandReim, setExpandReim]   = useState<string|null>(null);
   const [reimForm, setReimForm]       = useState({ date:"", project:"", purpose:"", advance:"", items:[{desc:"",amount:""}] });
   // Leave
-  const [leaveList, setLeaveList]     = useState<LeaveRequest[]>(initLeaves);
+  const [leaveList, setLeaveList]     = useState<LeaveRequest[]>([]);
   const [leaveFilter, setLeaveFilter] = useState<"all"|"draft"|"pending"|"approved"|"rejected">("all");
   const [leaveTypeF, setLeaveTypeF]   = useState<LeaveType|"all">("all");
   const [expandLeave, setExpandLeave] = useState<string|null>(null);
   const [adminView, setAdminView]     = useState(false);
   const [leaveForm, setLeaveForm]     = useState({ type:"Sakit" as LeaveType, startDate:"", endDate:"", reason:"", notes:"" });
   const [attached, setAttached]       = useState(false);
+  const [adminDashboard, setAdminDashboard] = useState<AdminDashboard | null>(null);
+  const [adminAttendance, setAdminAttendance] = useState<AdminAttendanceRow[]>([]);
+  const [formSubmitting, setFormSubmitting] = useState(false);
 
   const unreadCount = notifList.filter(n => !n.read).length;
 
@@ -283,9 +233,50 @@ export default function PayrollInApp() {
   const loadNotifications = async () => {
     try {
       const items = await fetchNotifications();
-      if (items.length > 0) setNotifList(items);
+      setNotifList(items);
     } catch {
-      // fallback ke mock
+      setNotifList([]);
+    }
+  };
+
+  const loadLeaves = async () => {
+    try {
+      const items = await fetchLeaves();
+      setLeaveList(items);
+    } catch {
+      setLeaveList([]);
+    }
+  };
+
+  const loadReimbursements = async () => {
+    try {
+      const items = await fetchReimbursements();
+      setReimList(items);
+    } catch {
+      setReimList([]);
+    }
+  };
+
+  const loadAdminDashboard = async () => {
+    try {
+      const [dashboard, attendance] = await Promise.all([
+        fetchAdminDashboard(),
+        fetchAdminTodayAttendance(),
+      ]);
+      setAdminDashboard(dashboard);
+      setAdminAttendance(attendance);
+    } catch {
+      setAdminDashboard(null);
+      setAdminAttendance([]);
+    }
+  };
+
+  const handleLeaveDecision = async (reqId: string, status: "approved" | "rejected") => {
+    try {
+      await updateLeaveDecision(parseReqId(reqId), status);
+      await loadLeaves();
+    } catch (err) {
+      setAbsenNotice(err instanceof Error ? err.message : "Gagal memperbarui status izin");
     }
   };
 
@@ -320,6 +311,9 @@ export default function PayrollInApp() {
       loadAttendance();
     }
     if (screen === "notifications") loadNotifications();
+    if (screen === "leave") loadLeaves();
+    if (screen === "reimbursement") loadReimbursements();
+    if (screen === "admin") loadAdminDashboard();
   }, [screen]);
 
   useEffect(() => {
@@ -865,6 +859,7 @@ export default function PayrollInApp() {
             ))}
           </div>
           <div className="px-5 flex flex-col gap-2.5">
+            {filtered.length===0&&<div className="text-center py-12"><p className="text-4xl mb-3">🔔</p><p className="font-bold" style={{color:txt}}>Belum ada notifikasi</p></div>}
             {filtered.map((n,i)=>{
               const cfg=ntypeCfg[n.type as keyof typeof ntypeCfg] ?? ntypeCfg.system;
               return (
@@ -939,24 +934,50 @@ export default function PayrollInApp() {
     const selType = leaveCfgMap[leaveForm.type];
     const needDoc = leaveForm.type==="Sakit"||leaveForm.type==="Cuti Khusus"||leaveForm.type==="Dinas";
 
-    const submitLeave = (asDraft: boolean) => {
-      const newId = `REQ-2026-00${leaveList.length+1}`;
-      const entry: LeaveRequest = {
-        id: newId, type: leaveForm.type,
-        startDate: leaveForm.startDate||"03 Jul 2026",
-        endDate:   leaveForm.endDate||"03 Jul 2026",
-        duration: dur,
-        reason: leaveForm.reason||"(belum diisi)",
-        attachment: attached?(leaveForm.type==="Sakit"?"surat_dokter.pdf":"lampiran.pdf"):undefined,
-        notes: leaveForm.notes,
-        status: asDraft?"draft":"pending",
-        createdAt: "03 Jul 2026",
-      };
-      setLeaveList(l=>[entry,...l]);
-      setLeaveForm({type:"Sakit",startDate:"",endDate:"",reason:"",notes:""});
-      setAttached(false);
-      setScreen("leave");
-      setLeaveFilter(asDraft?"draft":"pending");
+    const submitLeave = async (asDraft: boolean) => {
+      if (!leaveForm.reason.trim()) {
+        setAbsenNotice("Alasan permohonan wajib diisi");
+        return;
+      }
+      if (asDraft) {
+        const entry: LeaveRequest = {
+          id: `REQ-local-${Date.now()}`,
+          type: leaveForm.type,
+          startDate: leaveForm.startDate,
+          endDate: leaveForm.endDate,
+          duration: dur,
+          reason: leaveForm.reason,
+          attachment: attached ? "lampiran.pdf" : undefined,
+          notes: leaveForm.notes,
+          status: "draft",
+          createdAt: new Date().toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }),
+        };
+        setLeaveList((l) => [entry, ...l]);
+        setLeaveForm({ type: "Sakit", startDate: "", endDate: "", reason: "", notes: "" });
+        setAttached(false);
+        setScreen("leave");
+        setLeaveFilter("draft");
+        return;
+      }
+      setFormSubmitting(true);
+      try {
+        const created = await createLeave({
+          leaveType: LEAVE_TYPE_TO_API[leaveForm.type],
+          reason: leaveForm.reason,
+          startDate: leaveForm.startDate,
+          endDate: leaveForm.endDate,
+          attachment: attached ? "lampiran.pdf" : undefined,
+        });
+        setLeaveList((l) => [created, ...l]);
+        setLeaveForm({ type: "Sakit", startDate: "", endDate: "", reason: "", notes: "" });
+        setAttached(false);
+        setScreen("leave");
+        setLeaveFilter("pending");
+      } catch (err) {
+        setAbsenNotice(err instanceof Error ? err.message : "Gagal mengirim permohonan");
+      } finally {
+        setFormSubmitting(false);
+      }
     };
 
     return (
@@ -1072,11 +1093,11 @@ export default function PayrollInApp() {
 
           {/* Buttons */}
           <div className="px-5 flex gap-3">
-            <button onClick={()=>submitLeave(true)} className="flex-1 py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-80 active:scale-95" style={{...glass,color:txt}}>
+            <button onClick={()=>submitLeave(true)} disabled={formSubmitting} className="flex-1 py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-80 active:scale-95 disabled:opacity-50" style={{...glass,color:txt}}>
               <FileText className="w-4 h-4"/> Draft
             </button>
-            <button onClick={()=>submitLeave(false)} className="flex-[2] py-4 rounded-2xl font-bold text-white flex items-center justify-center gap-2 hover:opacity-90 active:scale-95" style={{background:"linear-gradient(135deg,#4338ca,#6d28d9)"}}>
-              <Send className="w-4 h-4"/> Kirim Permohonan
+            <button onClick={()=>submitLeave(false)} disabled={formSubmitting} className="flex-[2] py-4 rounded-2xl font-bold text-white flex items-center justify-center gap-2 hover:opacity-90 active:scale-95 disabled:opacity-50" style={{background:"linear-gradient(135deg,#4338ca,#6d28d9)"}}>
+              <Send className="w-4 h-4"/> {formSubmitting ? "Mengirim..." : "Kirim Permohonan"}
             </button>
           </div>
         </div>
@@ -1223,7 +1244,7 @@ export default function PayrollInApp() {
             <div className="px-5 flex flex-col gap-4">
               {/* Stats */}
               <div className="grid grid-cols-2 gap-3">
-                {[{label:"Total Pengajuan",value:"23",color:"#6366f1",bg:"rgba(99,102,241,0.15)"},{label:"Menunggu",value:`${leaveList.filter(l=>l.status==="pending").length}`,color:"#f59e0b",bg:"rgba(245,158,11,0.15)"},{label:"Disetujui",value:"15",color:"#10b981",bg:"rgba(16,185,129,0.15)"},{label:"Ditolak",value:"2",color:"#ef4444",bg:"rgba(239,68,68,0.15)"}].map(s=>(
+                {[{label:"Total Pengajuan",value:String(leaveList.length),color:"#6366f1",bg:"rgba(99,102,241,0.15)"},{label:"Menunggu",value:`${leaveList.filter(l=>l.status==="pending").length}`,color:"#f59e0b",bg:"rgba(245,158,11,0.15)"},{label:"Disetujui",value:String(leaveList.filter(l=>l.status==="approved").length),color:"#10b981",bg:"rgba(16,185,129,0.15)"},{label:"Ditolak",value:String(leaveList.filter(l=>l.status==="rejected").length),color:"#ef4444",bg:"rgba(239,68,68,0.15)"}].map(s=>(
                   <div key={s.label} className="rounded-2xl p-4" style={{...glass,borderLeft:`3px solid ${s.color}`}}>
                     <p className="text-2xl font-black" style={{color:s.color}}>{s.value}</p>
                     <p className="text-xs font-bold mt-0.5" style={{color:txt}}>{s.label}</p>
@@ -1239,7 +1260,7 @@ export default function PayrollInApp() {
                   ))}
                 </div>
                 <ResponsiveContainer width="100%" height={160}>
-                  <BarChart data={leaveWeeklyData} barGap={2} barCategoryGap="30%">
+                  <BarChart data={EMPTY_LEAVE_WEEKLY} barGap={2} barCategoryGap="30%">
                     <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill:dim,fontSize:11}}/>
                     <YAxis hide/>
                     <Tooltip contentStyle={{background:darkMode?"#0f172a":"#fff",border:"1px solid rgba(99,102,241,0.2)",borderRadius:12,color:txt,fontSize:12}} cursor={{fill:"rgba(99,102,241,0.05)"}}/>
@@ -1256,21 +1277,19 @@ export default function PayrollInApp() {
                   <p className="text-sm font-bold" style={{color:txt}}>Butuh Persetujuan</p>
                   <button className="flex items-center gap-1.5 text-xs font-bold" style={{color:"#6366f1"}}><Download className="w-3 h-3"/> Export</button>
                 </div>
-                {teamLeaves.map((item,i)=>{
-                  const scfg=leaveStatusCfg[item.status as keyof typeof leaveStatusCfg];
-                  const tcfg=leaveCfgMap[item.type as LeaveType];
+                {leaveList.filter(l => l.status === "pending").length === 0 ? (
+                  <div className="p-8 text-center"><p className="text-4xl mb-2">✅</p><p className="text-sm font-bold" style={{color:txt}}>Tidak ada pengajuan menunggu</p></div>
+                ) : leaveList.filter(l => l.status === "pending").map((item, i, arr) => {
+                  const tcfg = leaveCfgMap[item.type];
+                  const name = item.employeeName ?? "Karyawan";
                   return (
-                    <div key={i} className="p-4 flex items-center gap-3" style={{borderBottom:i<teamLeaves.length-1?`1px solid ${divC}`:"none"}}>
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-xs font-black flex-shrink-0" style={{background:"linear-gradient(135deg,#6366f1,#8b5cf6)"}}>{item.name.split(" ").map((n:string)=>n[0]).join("").slice(0,2)}</div>
-                      <div className="flex-1 min-w-0"><p className="text-sm font-bold truncate" style={{color:txt}}>{item.name}</p><p className="text-xs" style={{color:sub}}>{tcfg.emoji} {item.type} · {item.start}–{item.end}</p></div>
-                      {item.status==="pending"?(
-                        <div className="flex gap-2">
-                          <button className="px-3 py-1.5 rounded-xl text-xs font-bold text-white hover:opacity-90" style={{background:"linear-gradient(135deg,#10b981,#059669)"}}>✓ Setuju</button>
-                          <button className="px-3 py-1.5 rounded-xl text-xs font-bold hover:opacity-80" style={{background:"rgba(239,68,68,0.15)",color:"#ef4444"}}>✕ Tolak</button>
-                        </div>
-                      ):(
-                        <span className="px-2.5 py-1 rounded-xl text-xs font-bold" style={{background:scfg.bg,color:scfg.color}}>{scfg.label}</span>
-                      )}
+                    <div key={item.id} className="p-4 flex items-center gap-3" style={{borderBottom:i<arr.length-1?`1px solid ${divC}`:"none"}}>
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-xs font-black flex-shrink-0" style={{background:"linear-gradient(135deg,#6366f1,#8b5cf6)"}}>{name.split(" ").map((n:string)=>n[0]).join("").slice(0,2)}</div>
+                      <div className="flex-1 min-w-0"><p className="text-sm font-bold truncate" style={{color:txt}}>{name}</p><p className="text-xs" style={{color:sub}}>{tcfg.emoji} {item.type} · {item.startDate}–{item.endDate}</p></div>
+                      <div className="flex gap-2">
+                        <button onClick={()=>handleLeaveDecision(item.id,"approved")} className="px-3 py-1.5 rounded-xl text-xs font-bold text-white hover:opacity-90" style={{background:"linear-gradient(135deg,#10b981,#059669)"}}>✓ Setuju</button>
+                        <button onClick={()=>handleLeaveDecision(item.id,"rejected")} className="px-3 py-1.5 rounded-xl text-xs font-bold hover:opacity-80" style={{background:"rgba(239,68,68,0.15)",color:"#ef4444"}}>✕ Tolak</button>
+                      </div>
                     </div>
                   );
                 })}
@@ -1298,15 +1317,27 @@ export default function PayrollInApp() {
     const remRI = (i:number)=>setReimForm(f=>({...f,items:f.items.filter((_,idx)=>idx!==i)}));
     const updRI = (i:number,k:"desc"|"amount",v:string)=>setReimForm(f=>({...f,items:f.items.map((it,idx)=>idx===i?{...it,[k]:v}:it)}));
     const totalNew=reimForm.items.reduce((s,it)=>s+(parseInt(it.amount)||0),0);
-    const submitReim=()=>{
+    const submitReim=async ()=>{
       if(!reimForm.purpose)return;
       const items=reimForm.items.filter(it=>it.desc&&it.amount).map(it=>({desc:it.desc,amount:parseInt(it.amount)}));
       const total=items.reduce((s,it)=>s+it.amount,0);
-      const advance=parseInt(reimForm.advance)||0;
-      const entry:Reimburse={id:`RMB-2026-00${reimList.length+1}`,date:reimForm.date||"03 Jul 2026",purpose:reimForm.purpose,project:reimForm.project||"Internal",items,total,advance,balance:total-advance,status:"draft"};
-      setReimList(l=>[entry,...l]);
-      setReimForm({date:"",project:"",purpose:"",advance:"",items:[{desc:"",amount:""}]});
-      setScreen("reimbursement");setReimFilter("draft");
+      if(total<=0)return;
+      setFormSubmitting(true);
+      try {
+        const created = await createReimbursement({
+          title: reimForm.purpose,
+          description: reimForm.project || undefined,
+          amount: total,
+        });
+        setReimList(l=>[created,...l]);
+        setReimForm({date:"",project:"",purpose:"",advance:"",items:[{desc:"",amount:""}]});
+        setScreen("reimbursement");
+        setReimFilter("in-progress");
+      } catch (err) {
+        setAbsenNotice(err instanceof Error ? err.message : "Gagal menyimpan pengajuan");
+      } finally {
+        setFormSubmitting(false);
+      }
     };
     return (
       <div className="size-full flex flex-col overflow-hidden" style={{background:bgPage}}>
@@ -1335,7 +1366,7 @@ export default function PayrollInApp() {
                 <p className="text-base font-black" style={{color:"#6366f1"}}>{fmtRp(totalNew)}</p>
               </div>
             </div>
-            <button onClick={submitReim} className="w-full py-4 rounded-2xl font-bold text-white flex items-center justify-center gap-2 hover:opacity-90 active:scale-95" style={{background:"linear-gradient(135deg,#4338ca,#6d28d9)"}}><FileText className="w-5 h-5"/> Simpan sebagai Draft</button>
+            <button onClick={submitReim} disabled={formSubmitting} className="w-full py-4 rounded-2xl font-bold text-white flex items-center justify-center gap-2 hover:opacity-90 active:scale-95 disabled:opacity-50" style={{background:"linear-gradient(135deg,#4338ca,#6d28d9)"}}><FileText className="w-5 h-5"/> {formSubmitting ? "Menyimpan..." : "Kirim Pengajuan"}</button>
           </div>
         </div>
       </div>
@@ -1401,13 +1432,21 @@ export default function PayrollInApp() {
 
   // ── ADMIN DASHBOARD ─────────────────────────────────────────
   if (screen==="admin") {
-    const stats=[{label:"Total Karyawan",value:"247",badge:"+12",color:"#6366f1",bg:"rgba(99,102,241,0.15)",Icon:Users},{label:"Hadir",value:"201",badge:"81.5%",color:"#10b981",bg:"rgba(16,185,129,0.15)",Icon:CheckCircle},{label:"Telat",value:"23",badge:"9.3%",color:"#f59e0b",bg:"rgba(245,158,11,0.15)",Icon:Clock},{label:"Izin/Cuti",value:"18",badge:"7.3%",color:"#8b5cf6",bg:"rgba(139,92,246,0.15)",Icon:Shield},{label:"Tidak Hadir",value:"5",badge:"2.0%",color:"#ef4444",bg:"rgba(239,68,68,0.15)",Icon:X}];
+    const dash = adminDashboard;
+    const ts = dash?.todayStats ?? { hadir: 0, telat: 0, izin: 0, cuti: 0, sakit: 0, absent: 0, wfh: 0 };
+    const totalEmp = dash?.totalEmployees ?? 0;
+    const pct = (n: number) => totalEmp > 0 ? `${((n / totalEmp) * 100).toFixed(1)}%` : "0%";
+    const izinCuti = ts.izin + ts.cuti + ts.sakit + ts.wfh;
+    const weeklyData = dash?.weeklyChart ?? EMPTY_WEEKLY_CHART;
+    const monthlyData = EMPTY_MONTHLY_DATA;
+    const stats=[{label:"Total Karyawan",value:String(totalEmp),badge:totalEmp > 0 ? "aktif" : "—",color:"#6366f1",bg:"rgba(99,102,241,0.15)",Icon:Users},{label:"Hadir",value:String(ts.hadir),badge:pct(ts.hadir),color:"#10b981",bg:"rgba(16,185,129,0.15)",Icon:CheckCircle},{label:"Telat",value:String(ts.telat),badge:pct(ts.telat),color:"#f59e0b",bg:"rgba(245,158,11,0.15)",Icon:Clock},{label:"Izin/Cuti",value:String(izinCuti),badge:pct(izinCuti),color:"#8b5cf6",bg:"rgba(139,92,246,0.15)",Icon:Shield},{label:"Tidak Hadir",value:String(ts.absent),badge:pct(ts.absent),color:"#ef4444",bg:"rgba(239,68,68,0.15)",Icon:X}];
     const tt={background:darkMode?"#0f172a":"#fff",border:"1px solid rgba(99,102,241,0.2)",borderRadius:12,color:txt,fontSize:12};
+    const adminDateStr = now.toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
     return (
       <div className="size-full flex flex-col overflow-hidden" style={{background:bgPage}}>
         <div className="flex-1 overflow-y-auto pb-8">
           <Header title="Admin Dashboard" back={()=>{setScreen("home");setActiveTab("home");}} right={<DarkBtn/>}/>
-          <div className="px-5 mb-5"><p className="text-xs" style={{color:sub}}>Rekap: <span style={{color:"#6366f1",fontWeight:700}}>Kamis, 03 Juli 2026</span></p></div>
+          <div className="px-5 mb-5"><p className="text-xs" style={{color:sub}}>Rekap: <span style={{color:"#6366f1",fontWeight:700}}>{adminDateStr}</span></p></div>
           <div className="px-5 mb-5"><div className="grid grid-cols-2 gap-3 lg:grid-cols-5">{stats.map(({label,value,badge,color,bg,Icon})=>(<div key={label} className="rounded-2xl p-4" style={{...glass,borderLeft:`3px solid ${color}`}}><div className="w-9 h-9 rounded-xl flex items-center justify-center mb-3" style={{background:bg,color}}><Icon className="w-4 h-4"/></div><p className="text-2xl font-black" style={{color}}>{value}</p><p className="text-xs font-bold mt-0.5" style={{color:txt}}>{label}</p><p className="text-xs mt-1" style={{color}}>{badge}</p></div>))}</div></div>
           <div className="px-5 mb-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div className="rounded-2xl p-5" style={glass}>
@@ -1416,13 +1455,13 @@ export default function PayrollInApp() {
             </div>
             <div className="rounded-2xl p-5" style={glass}>
               <div className="flex items-center justify-between mb-4"><p className="text-sm font-bold" style={{color:txt}}>Tren Bulanan (%)</p><TrendingUp className="w-4 h-4 text-emerald-400"/></div>
-              <ResponsiveContainer width="100%" height={160}><AreaChart data={monthlyData}><defs><linearGradient id="ag" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#6366f1" stopOpacity={0.35}/><stop offset="95%" stopColor="#6366f1" stopOpacity={0}/></linearGradient></defs><XAxis dataKey="month" axisLine={false} tickLine={false} tick={{fill:dim,fontSize:11}}/><YAxis hide domain={[80,100]}/><Tooltip contentStyle={tt} cursor={{stroke:"rgba(99,102,241,0.3)"}}/><Area type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={2.5} fill="url(#ag)" dot={false} activeDot={{r:5,fill:"#6366f1",stroke:darkMode?"#0f172a":"#fff",strokeWidth:2}}/></AreaChart></ResponsiveContainer>
+              <ResponsiveContainer width="100%" height={160}><AreaChart data={monthlyData}><defs><linearGradient id="ag" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#6366f1" stopOpacity={0.35}/><stop offset="95%" stopColor="#6366f1" stopOpacity={0}/></linearGradient></defs><XAxis dataKey="month" axisLine={false} tickLine={false} tick={{fill:dim,fontSize:11}}/><YAxis hide domain={[0, 100]}/><Tooltip contentStyle={tt} cursor={{stroke:"rgba(99,102,241,0.3)"}}/><Area type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={2.5} fill="url(#ag)" dot={false} activeDot={{r:5,fill:"#6366f1",stroke:darkMode?"#0f172a":"#fff",strokeWidth:2}}/></AreaChart></ResponsiveContainer>
             </div>
           </div>
           <div className="px-5">
             <div className="rounded-2xl overflow-hidden" style={glass}>
               <div className="flex items-center justify-between p-4 border-b" style={{borderColor:divC}}><p className="text-sm font-bold" style={{color:txt}}>Rekap Karyawan — Hari Ini</p><button className="flex items-center gap-1.5 text-xs font-bold" style={{color:"#6366f1"}}><Download className="w-3 h-3"/> Export</button></div>
-              <div className="overflow-x-auto"><table className="w-full"><thead><tr style={{borderBottom:`1px solid ${divC}`}}>{["Karyawan","Jabatan","Masuk","Keluar","Status"].map(h=>(<th key={h} className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider" style={{color:dim}}>{h}</th>))}</tr></thead><tbody>{employeeData.map((emp,i)=>{const cfg=attendStatusCfg[emp.status as keyof typeof attendStatusCfg];return(<tr key={i} className="hover:opacity-80" style={{borderBottom:i<employeeData.length-1?`1px solid ${divC}`:"none"}}><td className="px-4 py-3.5"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-xl flex items-center justify-center text-white text-xs font-black flex-shrink-0" style={{background:"linear-gradient(135deg,#6366f1,#8b5cf6)"}}>{emp.name.split(" ").map((n:string)=>n[0]).join("").slice(0,2)}</div><span className="text-xs font-bold" style={{color:txt}}>{emp.name}</span></div></td><td className="px-4 py-3.5 text-xs" style={{color:sub}}>{emp.role}</td><td className="px-4 py-3.5 text-xs font-medium" style={{color:txt,fontFamily:"'JetBrains Mono',monospace"}}>{emp.checkIn}</td><td className="px-4 py-3.5 text-xs font-medium" style={{color:txt,fontFamily:"'JetBrains Mono',monospace"}}>{emp.checkOut}</td><td className="px-4 py-3.5"><span className={`px-2.5 py-1 rounded-xl text-xs font-bold ${cfg.color} ${cfg.bg}`}>{cfg.label}</span></td></tr>);})}</tbody></table></div>
+              <div className="overflow-x-auto"><table className="w-full"><thead><tr style={{borderBottom:`1px solid ${divC}`}}>{["Karyawan","Jabatan","Masuk","Keluar","Status"].map(h=>(<th key={h} className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider" style={{color:dim}}>{h}</th>))}</tr></thead><tbody>{adminAttendance.length===0?(<tr><td colSpan={5} className="px-4 py-8 text-center text-sm" style={{color:sub}}>Belum ada data absensi hari ini</td></tr>):adminAttendance.map((emp,i)=>{const cfg=attendStatusCfg[emp.status as keyof typeof attendStatusCfg];const name=emp.fullname??"—";return(<tr key={emp.id} className="hover:opacity-80" style={{borderBottom:i<adminAttendance.length-1?`1px solid ${divC}`:"none"}}><td className="px-4 py-3.5"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-xl flex items-center justify-center text-white text-xs font-black flex-shrink-0" style={{background:"linear-gradient(135deg,#6366f1,#8b5cf6)"}}>{name.split(" ").map((n:string)=>n[0]).join("").slice(0,2)}</div><span className="text-xs font-bold" style={{color:txt}}>{name}</span></div></td><td className="px-4 py-3.5 text-xs" style={{color:sub}}>—</td><td className="px-4 py-3.5 text-xs font-medium" style={{color:txt,fontFamily:"'JetBrains Mono',monospace"}}>{emp.checkIn??"—"}</td><td className="px-4 py-3.5 text-xs font-medium" style={{color:txt,fontFamily:"'JetBrains Mono',monospace"}}>{emp.checkOut??"—"}</td><td className="px-4 py-3.5"><span className={`px-2.5 py-1 rounded-xl text-xs font-bold ${cfg.color} ${cfg.bg}`}>{cfg.label}</span></td></tr>);})}</tbody></table></div>
             </div>
           </div>
         </div>
