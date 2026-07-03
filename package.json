@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "next start --hostname 0.0.0.0 -p ${PORT:-3000}",
     "lint": "next lint",
     "db:migrate": "node -e \"fetch('http://localhost:3000/api/db/migrate',{method:'POST'}).then(r=>r.json()).then(console.log).catch(console.error)\""
   },

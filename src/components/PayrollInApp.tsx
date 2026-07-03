@@ -31,6 +31,7 @@ import {
   fetchAdminDashboard,
   fetchAdminTodayAttendance,
   updateLeaveDecision,
+  updateReimbursementDecision,
   type AdminDashboard,
   type AdminAttendanceRow,
 } from "@/lib/attendance-api";
@@ -82,6 +83,10 @@ const LEAVE_TYPE_TO_API: Record<LeaveType, string> = {
 
 function parseReqId(id: string) {
   return Number(id.replace(/^REQ-/, ""));
+}
+
+function parseReimId(id: string) {
+  return Number(id.replace(/^RMB-/, ""));
 }
 
 // ── Leave config ───────────────────────────────────────────────
@@ -165,6 +170,11 @@ export default function PayrollInApp() {
   const [formSubmitting, setFormSubmitting] = useState(false);
 
   const unreadCount = notifList.filter(n => !n.read).length;
+  const isAdmin = currentUser?.role === "admin";
+
+  useEffect(() => {
+    if (!isAdmin) setAdminView(false);
+  }, [isAdmin]);
 
   useEffect(() => {
     const t = setTimeout(async () => {
@@ -277,6 +287,15 @@ export default function PayrollInApp() {
       await loadLeaves();
     } catch (err) {
       setAbsenNotice(err instanceof Error ? err.message : "Gagal memperbarui status izin");
+    }
+  };
+
+  const handleReimbursementDecision = async (reimId: string, status: "approved" | "rejected") => {
+    try {
+      await updateReimbursementDecision(parseReimId(reimId), status);
+      await loadReimbursements();
+    } catch (err) {
+      setAbsenNotice(err instanceof Error ? err.message : "Gagal memperbarui status reimbursement");
     }
   };
 
@@ -1127,15 +1146,18 @@ export default function PayrollInApp() {
             <div className="w-10"/>
             <h1 className="text-base font-bold" style={{color:txt}}>{adminView?"Tim · Izin & Cuti":"Izin & Cuti Saya"}</h1>
             <div className="flex items-center gap-2">
-              <button onClick={()=>setAdminView(v=>!v)} className="w-10 h-10 flex items-center justify-center rounded-xl hover:opacity-80" style={{...glass,background:adminView?"rgba(99,102,241,0.3)":undefined}}>
-                {adminView?<User className="w-4 h-4 text-indigo-400"/>:<Users className="w-4 h-4" style={{color:txt}}/>}
-              </button>
+              {isAdmin && (
+                <button onClick={()=>setAdminView(v=>!v)} className="w-10 h-10 flex items-center justify-center rounded-xl hover:opacity-80" style={{...glass,background:adminView?"rgba(99,102,241,0.3)":undefined}} title={adminView?"Lihat pengajuan saya":"Persetujuan tim"}>
+                  {adminView?<User className="w-4 h-4 text-indigo-400"/>:<Users className="w-4 h-4" style={{color:txt}}/>}
+                </button>
+              )}
               <BellBtn/>
             </div>
           </div>
 
           {/* ── USER VIEW ── */}
-          {!adminView && <>
+          {!adminView && (
+          <>
             {/* Balance card */}
             <div className="mx-5 mb-4 rounded-3xl overflow-hidden" style={{background:"linear-gradient(135deg,#065f46,#047857,#059669)"}}>
               <div className="relative p-5">
@@ -1218,7 +1240,7 @@ export default function PayrollInApp() {
                           {req.notes&&<div><p className="text-xs font-bold uppercase tracking-widest mb-1" style={{color:dim}}>Catatan</p><p className="text-sm" style={{color:sub}}>{req.notes}</p></div>}
                           {req.status==="approved"&&<div className="flex items-start gap-3 p-3 rounded-xl" style={{background:"rgba(16,185,129,0.1)",border:"1px solid rgba(16,185,129,0.25)"}}><CheckSquare className="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5"/><div><p className="text-sm font-bold text-emerald-400">Permohonan Disetujui</p><p className="text-xs mt-0.5" style={{color:sub}}>HR Manager · {req.createdAt}</p></div></div>}
                           {req.status==="rejected"&&<div className="flex items-start gap-3 p-3 rounded-xl" style={{background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.25)"}}><XSquare className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5"/><div><p className="text-sm font-bold text-red-400">Permohonan Ditolak</p>{req.decisionReason&&<p className="text-xs mt-0.5" style={{color:sub}}>{req.decisionReason}</p>}</div></div>}
-                          {req.status==="pending"&&<div className="flex items-center gap-3 p-3 rounded-xl" style={{background:"rgba(245,158,11,0.1)",border:"1px solid rgba(245,158,11,0.25)"}}><AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0"/><div><p className="text-sm font-bold text-amber-400">Menunggu Persetujuan</p><p className="text-xs mt-0.5" style={{color:sub}}>Sedang direview oleh atasan</p></div></div>}
+                          {req.status==="pending"&&<div className="flex items-center gap-3 p-3 rounded-xl" style={{background:"rgba(245,158,11,0.1)",border:"1px solid rgba(245,158,11,0.25)"}}><AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0"/><div><p className="text-sm font-bold text-amber-400">Menunggu Persetujuan Admin</p><p className="text-xs mt-0.5" style={{color:sub}}>Sedang direview oleh admin</p></div></div>}
                         </div>
                         {req.status==="draft"&&(
                           <div className="px-4 pb-4 flex gap-2">
@@ -1237,10 +1259,11 @@ export default function PayrollInApp() {
                 );
               })}
             </div>
-          </>}
+          </>
+          )}
 
           {/* ── ADMIN VIEW ── */}
-          {adminView&&(
+          {isAdmin && adminView && (
             <div className="px-5 flex flex-col gap-4">
               {/* Stats */}
               <div className="grid grid-cols-2 gap-3">
@@ -1299,7 +1322,7 @@ export default function PayrollInApp() {
         </div>
 
         {/* FAB */}
-        {!adminView&&(
+        {!adminView && !isAdmin &&(
           <div className="fixed bottom-24 right-5 z-50">
             <button onClick={()=>setScreen("leave-form")} className="flex items-center gap-2 pl-4 pr-5 py-3.5 rounded-2xl text-white font-bold text-sm hover:opacity-90 active:scale-95" style={{background:"linear-gradient(135deg,#065f46,#059669)",boxShadow:"0 8px 32px rgba(16,185,129,0.45)"}}>
               <Plus className="w-5 h-5"/> Ajukan Izin
@@ -1377,10 +1400,68 @@ export default function PayrollInApp() {
   if (screen==="reimbursement") {
     const ftabs:[typeof reimFilter,string][]=[["all","Semua"],["draft","Draft"],["in-progress","Diproses"],["done","Selesai"]];
     const visible=reimFilter==="all"?reimList:reimList.filter(r=>r.status===reimFilter);
+    const pendingReim = reimList.filter(r => r.status === "in-progress");
     return (
       <div className="size-full flex flex-col overflow-hidden" style={{background:bgPage}}>
         <div className="flex-1 overflow-y-auto pb-32">
-          <Header title="Reimbursement" right={<DarkBtn/>}/>
+          <div className="flex items-center justify-between px-5 pt-12 pb-4 flex-shrink-0">
+            <div className="w-10"/>
+            <h1 className="text-base font-bold" style={{color:txt}}>{isAdmin && adminView ? "Tim · Reimbursement" : "Reimbursement"}</h1>
+            <div className="flex items-center gap-2">
+              {isAdmin && (
+                <button onClick={()=>setAdminView(v=>!v)} className="w-10 h-10 flex items-center justify-center rounded-xl hover:opacity-80" style={{...glass,background:adminView?"rgba(99,102,241,0.3)":undefined}} title={adminView?"Lihat pengajuan saya":"Persetujuan tim"}>
+                  {adminView?<User className="w-4 h-4 text-indigo-400"/>:<Users className="w-4 h-4" style={{color:txt}}/>}
+                </button>
+              )}
+              <DarkBtn/>
+            </div>
+          </div>
+
+          {isAdmin && adminView ? (
+            <div className="px-5 flex flex-col gap-4">
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label: "Total Pengajuan", value: String(reimList.length), color: "#6366f1", bg: "rgba(99,102,241,0.15)" },
+                  { label: "Menunggu", value: String(pendingReim.length), color: "#f59e0b", bg: "rgba(245,158,11,0.15)" },
+                  { label: "Disetujui", value: String(reimList.filter(r => r.decision === "approved").length), color: "#10b981", bg: "rgba(16,185,129,0.15)" },
+                  { label: "Ditolak", value: String(reimList.filter(r => r.decision === "rejected").length), color: "#ef4444", bg: "rgba(239,68,68,0.15)" },
+                ].map(s => (
+                  <div key={s.label} className="rounded-2xl p-4" style={{ ...glass, borderLeft: `3px solid ${s.color}` }}>
+                    <p className="text-2xl font-black" style={{ color: s.color }}>{s.value}</p>
+                    <p className="text-xs font-bold mt-0.5" style={{ color: txt }}>{s.label}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="rounded-2xl overflow-hidden" style={glass}>
+                <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: divC }}>
+                  <p className="text-sm font-bold" style={{ color: txt }}>Butuh Persetujuan</p>
+                  <span className="text-xs font-bold px-2 py-1 rounded-lg" style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}>{pendingReim.length} pending</span>
+                </div>
+                {pendingReim.length === 0 ? (
+                  <div className="p-8 text-center"><p className="text-4xl mb-2">✅</p><p className="text-sm font-bold" style={{ color: txt }}>Tidak ada pengajuan menunggu</p></div>
+                ) : pendingReim.map((r, i, arr) => {
+                  const name = r.employeeName ?? "Karyawan";
+                  return (
+                    <div key={r.id} className="p-4" style={{ borderBottom: i < arr.length - 1 ? `1px solid ${divC}` : "none" }}>
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-xs font-black flex-shrink-0" style={{ background: "linear-gradient(135deg,#6366f1,#8b5cf6)" }}>{name.split(" ").map((n: string) => n[0]).join("").slice(0, 2)}</div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold truncate" style={{ color: txt }}>{name}</p>
+                          <p className="text-xs" style={{ color: sub }}>{r.purpose} · {fmtRp(r.total)}</p>
+                          <p className="text-xs mt-0.5" style={{ color: dim }}>{r.id} · {r.date}</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={() => handleReimbursementDecision(r.id, "approved")} className="flex-1 py-2.5 rounded-xl text-xs font-bold text-white hover:opacity-90" style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}>✓ Setuju</button>
+                        <button onClick={() => handleReimbursementDecision(r.id, "rejected")} className="flex-1 py-2.5 rounded-xl text-xs font-bold hover:opacity-80" style={{ background: "rgba(239,68,68,0.15)", color: "#ef4444" }}>✕ Tolak</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+          <>
           <div className="mx-5 mb-4 rounded-2xl p-4" style={{background:"linear-gradient(135deg,rgba(99,102,241,0.18),rgba(139,92,246,0.12))",border:"1px solid rgba(99,102,241,0.25)"}}>
             <div className="grid grid-cols-3 gap-3 text-center">
               {[{label:"Total",value:`${reimList.length} item`},{label:"Nilai",value:fmtRp(reimList.reduce((s,r)=>s+r.total,0))},{label:"Menunggu",value:`${reimList.filter(r=>r.status==="in-progress").length} item`}].map(({label,value})=>(
@@ -1410,7 +1491,7 @@ export default function PayrollInApp() {
                     <div className="border-t" style={{borderColor:divC}}>
                       <div className="px-4 pt-3 pb-2"><p className="text-xs font-bold uppercase tracking-widest mb-2" style={{color:dim}}>Rincian</p>{r.items.map((it,i)=>(<div key={i} className="flex justify-between items-center py-1.5 border-b last:border-0" style={{borderColor:divC}}><p className="text-xs" style={{color:txt}}>{it.desc}</p><p className="text-xs font-bold" style={{color:txt,fontFamily:"'JetBrains Mono',monospace"}}>{fmtRp(it.amount)}</p></div>))}</div>
                       {r.status==="done"&&r.decision&&(<div className="mx-4 mb-3 rounded-xl p-3 flex items-start gap-3" style={{background:r.decision==="approved"?"rgba(16,185,129,0.12)":"rgba(239,68,68,0.12)"}}>{r.decision==="approved"?<CheckSquare className="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5"/>:<XSquare className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5"/>}<div><p className="text-sm font-bold" style={{color:r.decision==="approved"?"#10b981":"#ef4444"}}>{r.decision==="approved"?"Disetujui":"Ditolak"}</p>{r.decisionReason&&<p className="text-xs mt-0.5" style={{color:sub}}>{r.decisionReason}</p>}</div></div>)}
-                      {r.status==="in-progress"&&(<div className="mx-4 mb-3 rounded-xl p-3 flex items-center gap-3" style={{background:"rgba(245,158,11,0.12)"}}><AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0"/><p className="text-sm font-bold text-amber-400">Menunggu Persetujuan</p></div>)}
+                      {r.status==="in-progress"&&(<div className="mx-4 mb-3 rounded-xl p-3 flex items-center gap-3" style={{background:"rgba(245,158,11,0.12)"}}><AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0"/><p className="text-sm font-bold text-amber-400">Menunggu Persetujuan Admin</p></div>)}
                       {r.status==="draft"&&(<div className="px-4 pb-4 flex gap-2"><button className="flex-1 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 hover:opacity-80" style={{...glass,color:txt}}><Edit3 className="w-3.5 h-3.5"/> Edit</button><button onClick={()=>setReimList(l=>l.map(item=>item.id===r.id?{...item,status:"in-progress" as const}:item))} className="flex-1 py-2.5 rounded-xl text-xs font-bold text-white flex items-center justify-center gap-1.5 hover:opacity-90 active:scale-95" style={{background:"linear-gradient(135deg,#4338ca,#6d28d9)"}}><Send className="w-3.5 h-3.5"/> Kirim</button></div>)}
                       {r.status==="done"&&(<div className="px-4 pb-4 flex gap-2"><button className="flex-1 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 hover:opacity-80" style={{...glass,color:txt}}><FileText className="w-3.5 h-3.5"/> PDF</button><button className="flex-1 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 hover:opacity-80" style={{...glass,color:txt}}><Download className="w-3.5 h-3.5"/> Excel</button></div>)}
                     </div>
@@ -1419,12 +1500,16 @@ export default function PayrollInApp() {
               );
             })}
           </div>
+          </>
+          )}
         </div>
+        {!isAdmin && (
         <div className="fixed bottom-24 right-5 z-50">
           <button onClick={()=>setScreen("reimbursement-form")} className="flex items-center gap-2 pl-4 pr-5 py-3.5 rounded-2xl text-white font-bold text-sm hover:opacity-90 active:scale-95" style={{background:"linear-gradient(135deg,#4338ca,#6d28d9)",boxShadow:"0 8px 32px rgba(99,102,241,0.5)"}}>
             <Plus className="w-5 h-5"/> Buat Pengajuan
           </button>
         </div>
+        )}
         <BottomNav/>
       </div>
     );

@@ -39,6 +39,7 @@ export interface Reimburse {
   status: "draft" | "in-progress" | "done";
   decision?: "approved" | "rejected";
   decisionReason?: string;
+  employeeName?: string;
 }
 
 export interface ApiLeave {
@@ -128,6 +129,7 @@ export function mapApiReimbursement(r: ApiReimbursement): Reimburse {
     decision:
       r.status === "approved" ? "approved" : r.status === "rejected" ? "rejected" : undefined,
     decisionReason: r.decisionNote ?? undefined,
+    employeeName: r.fullname,
   };
 }
 
