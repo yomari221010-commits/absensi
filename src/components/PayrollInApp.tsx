@@ -22,8 +22,17 @@ import { GeoLocationData, formatLatitude, formatLongitude, getCurrentLocation } 
 import {
   fetchAttendanceHistory,
   fetchTodayAttendance,
+  fetchAttendanceSummary,
   submitAttendance,
+  fetchNotifications,
 } from "@/lib/attendance-api";
+import {
+  loginApi,
+  fetchProfile,
+  logoutApi,
+  getToken,
+  type PublicUser,
+} from "@/lib/api-client";
 import {
   toDateKey,
   formatCheckIn,
@@ -160,7 +169,6 @@ const reimStatusCfg = {
   "done":        { label: "Selesai",  color: "#10b981", bg: "rgba(16,185,129,0.15)"  },
 };
 const fmtRp = (n: number) => `Rp ${n.toLocaleString("id-ID")}`;
-const unreadCount = notifData.filter(n => !n.read).length;
 
 // ══════════════════════════════════════════════════════════════
 export default function PayrollInApp() {
@@ -169,6 +177,11 @@ export default function PayrollInApp() {
   const [showPw, setShowPw]           = useState(false);
   const [email, setEmail]             = useState("");
   const [password, setPassword]       = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError]   = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<PublicUser | null>(null);
+  const [attSummary, setAttSummary]   = useState({ hadir: 0, telat: 0, izin: 0, cuti: 0, sakit: 0, absent: 0, wfh: 0 });
+  const [notifList, setNotifList]     = useState(notifData);
   const [now, setNow]                 = useState(new Date());
   const [activeTab, setActiveTab]     = useState("home");
   const [histFilter, setHistFilter]   = useState<HistFilter>("weekly");
@@ -201,7 +214,26 @@ export default function PayrollInApp() {
   const [leaveForm, setLeaveForm]     = useState({ type:"Sakit" as LeaveType, startDate:"", endDate:"", reason:"", notes:"" });
   const [attached, setAttached]       = useState(false);
 
-  useEffect(() => { const t = setTimeout(() => setScreen("login"), 2600); return () => clearTimeout(t); }, []);
+  const unreadCount = notifList.filter(n => !n.read).length;
+
+  useEffect(() => {
+    const t = setTimeout(async () => {
+      if (getToken()) {
+        try {
+          const user = await fetchProfile();
+          setCurrentUser(user);
+          setEmail(user.email);
+          setScreen(user.role === "admin" ? "admin" : "home");
+          setActiveTab("home");
+        } catch {
+          setScreen("login");
+        }
+      } else {
+        setScreen("login");
+      }
+    }, 2600);
+    return () => clearTimeout(t);
+  }, []);
   useEffect(() => { const iv = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(iv); }, []);
   useEffect(() => { document.documentElement.classList.toggle("dark", darkMode); }, [darkMode]);
 
@@ -226,12 +258,21 @@ export default function PayrollInApp() {
   const loadAttendance = async () => {
     setHistoryLoading(true);
     try {
-      const [records, today] = await Promise.all([
+      const [records, todayData] = await Promise.all([
         fetchAttendanceHistory(),
-        fetchTodayAttendance(),
+        fetchAttendanceSummary(),
       ]);
       setHistoryList(records);
-      setTodayRecord(today);
+      setTodayRecord(todayData.record);
+      setAttSummary({
+        hadir: todayData.summary.hadir ?? 0,
+        telat: todayData.summary.telat ?? 0,
+        izin: todayData.summary.izin ?? 0,
+        cuti: todayData.summary.cuti ?? 0,
+        sakit: todayData.summary.sakit ?? 0,
+        absent: todayData.summary.absent ?? 0,
+        wfh: todayData.summary.wfh ?? 0,
+      });
     } catch {
       // tetap tampilkan UI meski gagal load
     } finally {
@@ -239,10 +280,46 @@ export default function PayrollInApp() {
     }
   };
 
+  const loadNotifications = async () => {
+    try {
+      const items = await fetchNotifications();
+      if (items.length > 0) setNotifList(items);
+    } catch {
+      // fallback ke mock
+    }
+  };
+
+  const handleLogin = async () => {
+    setLoginLoading(true);
+    setLoginError(null);
+    try {
+      const user = await loginApi(email, password);
+      setCurrentUser(user);
+      if (user.role === "admin") {
+        setScreen("admin");
+      } else {
+        setScreen("home");
+        setActiveTab("home");
+      }
+    } catch (err) {
+      setLoginError(err instanceof Error ? err.message : "Login gagal");
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await logoutApi();
+    setCurrentUser(null);
+    setPassword("");
+    setScreen("login");
+  };
+
   useEffect(() => {
     if (screen === "home" || screen === "history" || screen === "attendance") {
       loadAttendance();
     }
+    if (screen === "notifications") loadNotifications();
   }, [screen]);
 
   useEffect(() => {
@@ -262,7 +339,8 @@ export default function PayrollInApp() {
       await exportAttendanceExcel({
         records: historyList,
         filter: histFilter,
-        employeeEmail: email || "budi.santoso@payrollin.id",
+        employeeEmail: currentUser?.email ?? email,
+        employeeName: currentUser?.fullname,
       });
     } catch {
       setAbsenNotice("Gagal mengekspor data absensi");
@@ -458,7 +536,11 @@ export default function PayrollInApp() {
                 </label>
                 <button type="button" className="text-xs font-bold" style={{color:"#6366f1"}}>Lupa password?</button>
               </div>
-              <button onClick={()=>{setScreen("home");setActiveTab("home");}} className="w-full py-3 rounded-xl font-bold text-white hover:opacity-90 active:scale-[0.98] transition-transform" style={{background:"linear-gradient(135deg,#4338ca,#7c3aed)"}}>Masuk</button>
+              {loginError && (
+                <p className="text-xs font-medium text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2">{loginError}</p>
+              )}
+              <button type="button" onClick={handleLogin} disabled={loginLoading} className="w-full py-3 rounded-xl font-bold text-white hover:opacity-90 active:scale-[0.98] transition-transform disabled:opacity-60" style={{background:"linear-gradient(135deg,#4338ca,#7c3aed)"}}>{loginLoading ? "Memproses..." : "Masuk"}</button>
+              <p className="text-[10px] text-center" style={{color:dim}}>Demo: budi@payrollin.id / employee123 · admin@payrollin.id / admin123</p>
             </div>
           </div>
         </div>
@@ -469,10 +551,10 @@ export default function PayrollInApp() {
   // ── HOME ────────────────────────────────────────────────────
   if (screen==="home") {
     const sumCards = [
-      {label:"Hadir",value:"18",color:"#10b981",bg:"rgba(16,185,129,0.15)"},
-      {label:"Telat",value:"2", color:"#f59e0b",bg:"rgba(245,158,11,0.15)"},
-      {label:"Izin", value:"1", color:"#6366f1",bg:"rgba(99,102,241,0.15)"},
-      {label:"Cuti", value:"3", color:"#8b5cf6",bg:"rgba(139,92,246,0.15)"},
+      {label:"Hadir",value:String(attSummary.hadir),color:"#10b981",bg:"rgba(16,185,129,0.15)"},
+      {label:"Telat",value:String(attSummary.telat), color:"#f59e0b",bg:"rgba(245,158,11,0.15)"},
+      {label:"Izin", value:String(attSummary.izin), color:"#6366f1",bg:"rgba(99,102,241,0.15)"},
+      {label:"Cuti", value:String(attSummary.cuti), color:"#8b5cf6",bg:"rgba(139,92,246,0.15)"},
     ];
     const hasCheckedIn = !!todayRecord?.checkIn;
     const hasCheckedOut = !!todayRecord?.checkOut;
@@ -493,11 +575,11 @@ export default function PayrollInApp() {
           {/* Topbar */}
           <div className="flex items-center justify-between px-5 pt-12 pb-3">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-black text-base flex-shrink-0" style={{background:"linear-gradient(135deg,#6366f1,#8b5cf6)"}}>BS</div>
+              <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-black text-base flex-shrink-0" style={{background:"linear-gradient(135deg,#6366f1,#8b5cf6)"}}>{(currentUser?.fullname ?? "U").split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase()}</div>
               <div>
-                <p className="text-xs" style={{color:sub}}>Selamat pagi,</p>
-                <p className="font-bold text-sm" style={{color:txt}}>Budi Santoso</p>
-                <p className="text-xs font-medium" style={{color:"#6366f1"}}>Frontend Developer</p>
+                <p className="text-xs" style={{color:sub}}>Selamat datang,</p>
+                <p className="font-bold text-sm" style={{color:txt}}>{currentUser?.fullname ?? "Karyawan"}</p>
+                <p className="text-xs font-medium" style={{color:"#6366f1"}}>{currentUser?.position ?? "Staff"}</p>
               </div>
             </div>
             <div className="flex items-center gap-2"><DarkBtn/><BellBtn/></div>
@@ -770,9 +852,9 @@ export default function PayrollInApp() {
 
   // ── NOTIFICATIONS ────────────────────────────────────────────
   if (screen==="notifications") {
-    const ntypeCfg={reminder:{emoji:"⏰",bg:"rgba(245,158,11,0.15)"},approval:{emoji:"✅",bg:"rgba(16,185,129,0.15)"},announcement:{emoji:"📢",bg:"rgba(99,102,241,0.15)"}};
+    const ntypeCfg={reminder:{emoji:"⏰",bg:"rgba(245,158,11,0.15)"},approval:{emoji:"✅",bg:"rgba(16,185,129,0.15)"},announcement:{emoji:"📢",bg:"rgba(99,102,241,0.15)"},attendance:{emoji:"📍",bg:"rgba(99,102,241,0.15)"},system:{emoji:"🔔",bg:"rgba(148,163,184,0.15)"}};
     const tabs=["all","reminder","approval","announcement"];
-    const filtered=notifTab==="all"?notifData:notifData.filter(n=>n.type===notifTab);
+    const filtered=notifTab==="all"?notifList:notifList.filter(n=>n.type===notifTab);
     return (
       <div className="size-full flex flex-col overflow-hidden" style={{background:bgPage}}>
         <div className="flex-1 overflow-y-auto pb-28">
@@ -784,7 +866,7 @@ export default function PayrollInApp() {
           </div>
           <div className="px-5 flex flex-col gap-2.5">
             {filtered.map((n,i)=>{
-              const cfg=ntypeCfg[n.type as keyof typeof ntypeCfg];
+              const cfg=ntypeCfg[n.type as keyof typeof ntypeCfg] ?? ntypeCfg.system;
               return (
                 <div key={i} className="rounded-2xl p-4 flex items-start gap-3.5" style={{...glass,opacity:n.read?0.72:1}}>
                   <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl flex-shrink-0" style={{background:cfg.bg}}>{cfg.emoji}</div>
@@ -805,6 +887,7 @@ export default function PayrollInApp() {
 
   // ── PROFILE ──────────────────────────────────────────────────
   if (screen==="profile") {
+    const initials = (currentUser?.fullname ?? "U").split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase();
     const menu=[{Icon:Edit3,label:"Edit Profil",color:"#6366f1"},{Icon:Settings,label:"Pengaturan",color:"#8b5cf6"},{Icon:Lock,label:"Privasi & Keamanan",color:"#06b6d4"},{Icon:Download,label:"Ekspor Data",color:"#10b981"},{Icon:LogOut,label:"Keluar",color:"#ef4444",danger:true}];
     return (
       <div className="size-full flex flex-col overflow-hidden" style={{background:bgPage}}>
@@ -813,17 +896,17 @@ export default function PayrollInApp() {
           <div className="mx-5 mb-5 rounded-3xl overflow-hidden relative" style={{background:"linear-gradient(135deg,#312e81,#4c1d95,#6d28d9)"}}>
             <div className="absolute top-0 right-0 w-32 h-32 rounded-full opacity-15" style={{background:"radial-gradient(circle,#fff,transparent 70%)",transform:"translate(25%,-25%)"}}/>
             <div className="relative p-6 text-center">
-              <div className="w-24 h-24 rounded-3xl mx-auto mb-3 flex items-center justify-center text-white font-black text-2xl" style={{background:"rgba(255,255,255,0.2)"}}>BS</div>
-              <h2 className="text-xl font-black text-white">Budi Santoso</h2>
-              <p className="text-indigo-200 text-sm mt-0.5">Frontend Developer · Engineering</p>
+              <div className="w-24 h-24 rounded-3xl mx-auto mb-3 flex items-center justify-center text-white font-black text-2xl" style={{background:"rgba(255,255,255,0.2)"}}>{initials}</div>
+              <h2 className="text-xl font-black text-white">{currentUser?.fullname ?? "Karyawan"}</h2>
+              <p className="text-indigo-200 text-sm mt-0.5">{currentUser?.position ?? "—"} · {currentUser?.department ?? "—"}</p>
               <div className="flex justify-center gap-8 mt-4 pt-4 border-t border-white/15">
-                {[["18","Hadir"],["2","Telat"],["3","Cuti"]].map(([v,l])=>(<div key={l}><p className="text-white font-black text-lg">{v}</p><p className="text-indigo-200 text-xs">{l}</p></div>))}
+                {[[""+attSummary.hadir,"Hadir"],[""+attSummary.telat,"Telat"],[""+attSummary.cuti,"Cuti"]].map(([v,l])=>(<div key={l}><p className="text-white font-black text-lg">{v}</p><p className="text-indigo-200 text-xs">{l}</p></div>))}
               </div>
             </div>
           </div>
           <div className="px-5 mb-4">
             <div className="rounded-2xl overflow-hidden" style={glass}>
-              {[{Icon:Mail,label:"Email",value:"budi.santoso@payrollin.id"},{Icon:Building2,label:"Departemen",value:"Engineering"},{Icon:Phone,label:"Telepon",value:"+62 812-3456-7890"},{Icon:MapPin,label:"Kantor",value:"Jakarta Selatan"}].map(({Icon,label,value},i,arr)=>(
+              {[{Icon:Mail,label:"Email",value:currentUser?.email??"—"},{Icon:Building2,label:"Departemen",value:currentUser?.department??"—"},{Icon:Phone,label:"Telepon",value:currentUser?.phone??"—"},{Icon:MapPin,label:"ID Karyawan",value:currentUser?.employeeId??"—"}].map(({Icon,label,value},i,arr)=>(
                 <div key={label} className="flex items-center gap-4 px-4 py-3.5" style={{borderBottom:i<arr.length-1?`1px solid ${divC}`:"none"}}>
                   <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 text-indigo-400" style={{background:"rgba(99,102,241,0.1)"}}><Icon className="w-4 h-4"/></div>
                   <div><p className="text-xs" style={{color:dim}}>{label}</p><p className="text-sm font-bold" style={{color:txt}}>{value}</p></div>
@@ -834,7 +917,7 @@ export default function PayrollInApp() {
           <div className="px-5">
             <div className="rounded-2xl overflow-hidden" style={glass}>
               {menu.map(({Icon,label,color,danger},i)=>(
-                <button key={label} onClick={()=>{if(danger)setScreen("login");}} className="w-full flex items-center gap-4 px-4 py-3.5 text-left hover:opacity-75" style={{borderBottom:i<menu.length-1?`1px solid ${divC}`:"none"}}>
+                <button key={label} onClick={()=>{if(danger) void handleLogout();}} className="w-full flex items-center gap-4 px-4 py-3.5 text-left hover:opacity-75" style={{borderBottom:i<menu.length-1?`1px solid ${divC}`:"none"}}>
                   <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{background:`${color}18`,color}}><Icon className="w-4 h-4"/></div>
                   <span className="flex-1 text-sm font-bold" style={{color:danger?"#ef4444":txt}}>{label}</span>
                   {!danger&&<ChevronRight className="w-4 h-4" style={{color:dim}}/>}

@@ -1,51 +1,68 @@
-import { NextResponse } from "next/server";
-import { listAttendance, getTodayAttendance, recordCheckIn, recordCheckOut } from "@/lib/attendance-db";
+import { z } from "zod";
+import { getAuthUser, requireAuth } from "@/lib/auth";
+import {
+  listAttendanceForUser,
+  listAllAttendance,
+  recordCheckIn,
+  recordCheckOut,
+} from "@/lib/attendance-db";
+import { createNotification } from "@/lib/notifications-db";
+import { jsonOk, handleApiError } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";
 
+const postSchema = z.object({
+  type: z.enum(["masuk", "keluar"]),
+  photo: z.string().min(1),
+  latitude: z.number(),
+  longitude: z.number(),
+  accuracy: z.number(),
+  address: z.string().min(1),
+});
+
 export async function GET(request: Request) {
   try {
-    const { searchParams } = new URL(request.url);
-    if (searchParams.get("today") === "1") {
-      return NextResponse.json({ record: getTodayAttendance() });
-    }
-    return NextResponse.json({ records: listAttendance() });
+    const user = requireAuth(await getAuthUser(request));
+    const records =
+      user.role === "admin"
+        ? await listAllAttendance()
+        : await listAttendanceForUser(user.id);
+    return jsonOk({ records });
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Gagal memuat data" },
-      { status: 500 }
-    );
+    return handleApiError(err);
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { type, photo, latitude, longitude, accuracy, address } = body;
-
-    if (type !== "masuk" && type !== "keluar") {
-      return NextResponse.json({ error: "Tipe absensi tidak valid" }, { status: 400 });
-    }
-    if (!photo || latitude == null || longitude == null || !address) {
-      return NextResponse.json({ error: "Data foto dan lokasi wajib diisi" }, { status: 400 });
+    const user = requireAuth(await getAuthUser(request));
+    if (user.role !== "employee" && user.role !== "admin") {
+      return handleApiError(new Error("Forbidden"));
     }
 
+    const body = postSchema.parse(await request.json());
     const payload = {
-      photo: String(photo),
-      latitude: Number(latitude),
-      longitude: Number(longitude),
-      accuracy: Number(accuracy ?? 0),
-      address: String(address),
+      photo: body.photo,
+      latitude: body.latitude,
+      longitude: body.longitude,
+      accuracy: body.accuracy,
+      address: body.address,
     };
 
     const record =
-      type === "masuk" ? recordCheckIn(payload) : recordCheckOut(payload);
+      body.type === "masuk"
+        ? await recordCheckIn(user.id, payload)
+        : await recordCheckOut(user.id, payload);
 
-    return NextResponse.json({ record });
-  } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Gagal menyimpan absensi" },
-      { status: 400 }
+    await createNotification(
+      user.id,
+      body.type === "masuk" ? "Check In Berhasil" : "Check Out Berhasil",
+      `Absensi ${body.type === "masuk" ? "masuk" : "keluar"} tercatat pada ${record.checkIn ?? record.checkOut}.`,
+      "attendance"
     );
+
+    return jsonOk({ record });
+  } catch (err) {
+    return handleApiError(err);
   }
 }
