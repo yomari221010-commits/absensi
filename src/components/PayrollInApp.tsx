@@ -35,7 +35,6 @@ import {
   filterAttendanceByPeriod,
   type HistFilter,
 } from "@/lib/attendance-period";
-import { exportAttendanceExcel } from "@/lib/export-attendance-excel";
 
 type Screen =
   | "splash" | "login" | "home" | "attendance"
@@ -259,6 +258,7 @@ export default function PayrollInApp() {
   const handleExportHistory = async () => {
     setExporting(true);
     try {
+      const { exportAttendanceExcel } = await import("@/lib/export-attendance-excel");
       await exportAttendanceExcel({
         records: historyList,
         filter: histFilter,
@@ -626,7 +626,6 @@ export default function PayrollInApp() {
                 latitude={currentGeo.latitude}
                 longitude={currentGeo.longitude}
                 accuracy={currentGeo.accuracy}
-                darkMode={darkMode}
               />
               <div className="absolute top-3 left-3 z-[1000] px-3 py-1.5 rounded-xl text-xs font-bold text-white flex items-center gap-1.5 pointer-events-none" style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(8px)" }}>
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />

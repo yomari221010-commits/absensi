@@ -1,4 +1,3 @@
-import ExcelJS from "exceljs";
 import type { AttendanceRecord } from "./attendance-types";
 import {
   filterAttendanceByPeriod,
@@ -99,6 +98,7 @@ export async function exportAttendanceExcel({
   department = "Engineering",
   referenceDate = new Date(),
 }: ExportAttendanceOptions): Promise<void> {
+  const ExcelJS = (await import("exceljs")).default;
   const filtered = filterAttendanceByPeriod(records, filter, referenceDate);
   const periodLabel = getPeriodLabel(filter, referenceDate);
   const exportedAt = new Date().toLocaleString("id-ID", {
@@ -362,5 +362,3 @@ export async function exportAttendanceExcel({
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 }
-
-export { filterAttendanceByPeriod, getPeriodLabel, type HistFilter };

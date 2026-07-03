@@ -14,16 +14,14 @@ const markerIcon = L.icon({
   shadowSize: [41, 41],
 });
 
-const DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
-const LIGHT_TILES = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+const MAP_TILES = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
 const TILE_ATTR =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
 
 interface LocationMapProps {
   latitude: number;
   longitude: number;
   accuracy?: number;
-  darkMode?: boolean;
   className?: string;
 }
 
@@ -31,7 +29,6 @@ export function LocationMap({
   latitude,
   longitude,
   accuracy = 0,
-  darkMode = true,
   className = "h-full w-full",
 }: LocationMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -48,10 +45,13 @@ export function LocationMap({
       center: [latitude, longitude],
       zoom: 16,
       scrollWheelZoom: false,
+      zoomControl: false,
     });
     mapRef.current = map;
 
-    tileRef.current = L.tileLayer(darkMode ? DARK_TILES : LIGHT_TILES, {
+    L.control.zoom({ position: "bottomleft" }).addTo(map);
+
+    tileRef.current = L.tileLayer(MAP_TILES, {
       attribution: TILE_ATTR,
     }).addTo(map);
 
@@ -110,18 +110,14 @@ export function LocationMap({
     }
   }, [latitude, longitude, accuracy]);
 
-  useEffect(() => {
-    tileRef.current?.setUrl(darkMode ? DARK_TILES : LIGHT_TILES);
-  }, [darkMode]);
-
   return (
     <div
       ref={containerRef}
-      className={className}
+      className={`location-map ${className}`}
       style={{
         height: "100%",
         width: "100%",
-        background: darkMode ? "#0f172a" : "#e8ecff",
+        background: "#e8edf4",
       }}
     />
   );
