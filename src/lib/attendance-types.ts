@@ -8,6 +8,12 @@ export interface AttendanceRecord {
   checkOut: string | null;
   status: AttendStatus;
   location: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  accuracy?: number | null;
+  checkInPhoto?: string | null;
+  checkOutPhoto?: string | null;
+  workingHours?: number | null;
   photo?: string | null;
 }
 

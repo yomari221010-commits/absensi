@@ -35,6 +35,12 @@ function mapRow(row: AttendanceRow): AttendanceRecord {
     checkOut: row.check_out,
     status: row.status as AttendanceRecord["status"],
     location: row.location,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    accuracy: row.accuracy,
+    checkInPhoto: row.check_in_photo,
+    checkOutPhoto: row.check_out_photo,
+    workingHours: row.working_hours,
     photo: row.check_in_photo ?? row.check_out_photo,
   };
 }

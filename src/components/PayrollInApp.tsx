@@ -145,6 +145,12 @@ export default function PayrollInApp() {
   const [geoLoading, setGeoLoading]   = useState(false);
   const [geoError, setGeoError]       = useState<string | null>(null);
   const [absenNotice, setAbsenNotice] = useState<string | null>(null);
+  const [attDetail, setAttDetail] = useState<{
+    record: AttendanceRecord;
+    captureType?: "masuk" | "keluar";
+    capturePhoto?: string;
+    captureGeo?: GeoLocationData;
+  } | null>(null);
   const [cameraBack, setCameraBack]   = useState<Screen>("attendance");
   const [historyList, setHistoryList] = useState<AttendanceRecord[]>([]);
   const [todayRecord, setTodayRecord]   = useState<AttendanceRecord | null>(null);
@@ -252,9 +258,18 @@ export default function PayrollInApp() {
   const loadLeaves = async () => {
     try {
       const items = await fetchLeaves();
-      setLeaveList(items);
+      setLeaveList((prev) => {
+        const drafts = prev.filter((l) => l.id.startsWith("REQ-local-"));
+        const merged = [...drafts, ...items];
+        const seen = new Set<string>();
+        return merged.filter((l) => {
+          if (seen.has(l.id)) return false;
+          seen.add(l.id);
+          return true;
+        });
+      });
     } catch {
-      setLeaveList([]);
+      setLeaveList((prev) => prev.filter((l) => l.id.startsWith("REQ-local-")));
     }
   };
 
@@ -330,8 +345,8 @@ export default function PayrollInApp() {
       loadAttendance();
     }
     if (screen === "notifications") loadNotifications();
-    if (screen === "leave") loadLeaves();
-    if (screen === "reimbursement") loadReimbursements();
+    if (screen === "home" || screen === "leave") loadLeaves();
+    if (screen === "home" || screen === "reimbursement") loadReimbursements();
     if (screen === "admin") loadAdminDashboard();
   }, [screen]);
 
@@ -384,11 +399,12 @@ export default function PayrollInApp() {
       setCurrentGeo(location);
       setTodayRecord(record);
       await loadAttendance();
-      setAbsenNotice(
-        absenType === "masuk"
-          ? "Absen masuk berhasil tercatat!"
-          : "Absen keluar berhasil tercatat!"
-      );
+      setAttDetail({
+        record,
+        captureType: absenType,
+        capturePhoto: photo,
+        captureGeo: location,
+      });
       setScreen("home");
       setActiveTab("home");
     } catch (err) {
@@ -406,6 +422,101 @@ export default function PayrollInApp() {
   const sub     = darkMode ? "#94a3b8" : "#64748b";
   const dim     = darkMode ? "#64748b" : "#94a3b8";
   const divC    = darkMode ? "rgba(255,255,255,0.06)" : "rgba(99,102,241,0.08)";
+
+  const openAttDetail = (record: AttendanceRecord) => setAttDetail({ record });
+
+  const AttDetailModal = () => {
+    if (!attDetail) return null;
+    const { record, captureType, capturePhoto, captureGeo } = attDetail;
+    const cfg = attendStatusCfg[record.status as keyof typeof attendStatusCfg];
+    const masukPhoto = record.checkInPhoto ?? (captureType === "masuk" ? capturePhoto : undefined);
+    const keluarPhoto = record.checkOutPhoto ?? (captureType === "keluar" ? capturePhoto : undefined);
+    const lat = captureGeo?.latitude ?? record.latitude;
+    const lng = captureGeo?.longitude ?? record.longitude;
+    const acc = captureGeo?.accuracy ?? record.accuracy;
+    const fullAddress = captureGeo?.address ?? record.location ?? "—";
+    const isSuccess = !!captureType;
+
+    return (
+      <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(6px)" }} onClick={() => setAttDetail(null)}>
+        <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-3xl" style={{ ...glass, background: darkMode ? "rgba(15,23,42,0.95)" : "rgba(255,255,255,0.98)" }} onClick={(e) => e.stopPropagation()}>
+          <div className="p-5 border-b flex items-center justify-between" style={{ borderColor: divC }}>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest" style={{ color: isSuccess ? "#10b981" : "#6366f1" }}>
+                {isSuccess ? "✓ Absensi Berhasil" : "Detail Absensi"}
+              </p>
+              <h2 className="text-lg font-black mt-0.5" style={{ color: txt }}>
+                {captureType === "masuk" ? "Absen Masuk" : captureType === "keluar" ? "Absen Keluar" : record.date}
+              </h2>
+            </div>
+            <button type="button" onClick={() => setAttDetail(null)} className="w-9 h-9 flex items-center justify-center rounded-xl hover:opacity-80" style={glass}>
+              <X className="w-5 h-5" style={{ color: txt }} />
+            </button>
+          </div>
+
+          <div className="p-5 flex flex-col gap-4">
+            {(masukPhoto || keluarPhoto) && (
+              <div className="flex flex-col gap-3">
+                {masukPhoto && (
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: dim }}>Foto Masuk</p>
+                    <img src={masukPhoto} alt="Foto absen masuk" className="w-full rounded-2xl object-cover max-h-48 border" style={{ borderColor: divC }} />
+                  </div>
+                )}
+                {keluarPhoto && (
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: dim }}>Foto Keluar</p>
+                    <img src={keluarPhoto} alt="Foto absen keluar" className="w-full rounded-2xl object-cover max-h-48 border" style={{ borderColor: divC }} />
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { label: "Tanggal", value: record.date, mono: false },
+                { label: "Status", value: cfg.label, mono: false },
+                { label: "Jam Masuk", value: formatCheckIn(record.checkIn), mono: true },
+                { label: "Jam Keluar", value: formatCheckOut(record.checkOut), mono: true },
+                ...(record.workingHours != null ? [{ label: "Durasi Kerja", value: `${record.workingHours} jam`, mono: false }] : []),
+                ...(acc != null ? [{ label: "Akurasi GPS", value: `±${Math.round(acc)} m`, mono: false }] : []),
+              ].map(({ label, value, mono }) => (
+                <div key={label} className="rounded-xl p-3" style={{ background: darkMode ? "rgba(255,255,255,0.04)" : "rgba(99,102,241,0.05)" }}>
+                  <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: dim }}>{label}</p>
+                  <p className="text-sm font-bold mt-1" style={{ color: txt, fontFamily: mono ? "'JetBrains Mono',monospace" : undefined }}>{value}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="rounded-xl p-3" style={{ background: darkMode ? "rgba(255,255,255,0.04)" : "rgba(99,102,241,0.05)" }}>
+              <p className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: dim }}>Lokasi Absensi</p>
+              <p className="text-sm leading-relaxed" style={{ color: txt }}>{fullAddress}</p>
+              {lat != null && lng != null && (
+                <p className="text-xs mt-2 font-mono" style={{ color: sub }}>
+                  {formatLatitude(lat)} · {formatLongitude(lng)}
+                </p>
+              )}
+              {lat != null && lng != null && (
+                <a
+                  href={`https://www.google.com/maps?q=${lat},${lng}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 mt-2 text-xs font-bold"
+                  style={{ color: "#6366f1" }}
+                >
+                  <MapPin className="w-3.5 h-3.5" /> Buka di Google Maps
+                </a>
+              )}
+            </div>
+
+            <button type="button" onClick={() => setAttDetail(null)} className="w-full py-3.5 rounded-2xl font-bold text-white hover:opacity-90" style={{ background: "linear-gradient(135deg,#4338ca,#6d28d9)" }}>
+              Tutup
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // ── SPLASH ──────────────────────────────────────────────────
   if (screen==="splash") return (
@@ -665,16 +776,26 @@ export default function PayrollInApp() {
               {historyList.slice(0,3).map((item)=>{
                 const cfg=attendStatusCfg[item.status as keyof typeof attendStatusCfg];
                 return (
-                  <div key={item.dateKey} className="rounded-2xl p-4 flex items-center justify-between" style={glass}>
-                    <div>
-                      <p className="text-sm font-bold" style={{color:txt}}>{item.date}</p>
-                      <p className="text-xs mt-0.5" style={{color:dim}}>
-                        {formatTimeRange(item.checkIn, item.checkOut)}
-                        {item.location && ` · ${item.location}`}
-                      </p>
+                  <button key={item.id} type="button" onClick={()=>openAttDetail(item)} className="rounded-2xl p-4 flex items-center justify-between w-full text-left hover:opacity-90 active:scale-[0.99] transition-all" style={glass}>
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      {(item.checkInPhoto || item.checkOutPhoto || item.photo) ? (
+                        <img src={item.checkInPhoto ?? item.checkOutPhoto ?? item.photo ?? ""} alt="" className="w-12 h-12 rounded-xl object-cover flex-shrink-0 border" style={{ borderColor: divC }} />
+                      ) : (
+                        <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "rgba(99,102,241,0.15)" }}><ClipboardList className="w-5 h-5 text-indigo-400" /></div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold" style={{color:txt}}>{item.date}</p>
+                        <p className="text-xs mt-0.5 truncate" style={{color:dim}}>
+                          {formatTimeRange(item.checkIn, item.checkOut)}
+                          {item.location && ` · ${item.location}`}
+                        </p>
+                      </div>
                     </div>
-                    <span className={`px-2.5 py-1 rounded-xl text-xs font-bold ${cfg.color} ${cfg.bg}`}>{cfg.label}</span>
-                  </div>
+                    <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                      <span className={`px-2.5 py-1 rounded-xl text-xs font-bold ${cfg.color} ${cfg.bg}`}>{cfg.label}</span>
+                      <ChevronRight className="w-4 h-4" style={{ color: dim }} />
+                    </div>
+                  </button>
                 );
               })}
             </div>
@@ -694,6 +815,7 @@ export default function PayrollInApp() {
           </div>
         </div>
         <BottomNav/>
+        <AttDetailModal />
       </div>
     );
   }
@@ -849,16 +971,32 @@ export default function PayrollInApp() {
           )}
           {visibleHistory.map((item)=>{
             const cfg=attendStatusCfg[item.status as keyof typeof attendStatusCfg];
+            const thumb = item.checkInPhoto ?? item.checkOutPhoto ?? item.photo;
             return (
-              <div key={item.dateKey} className="rounded-2xl p-4" style={glass}>
-                <div className="flex items-start justify-between mb-3"><p className="text-sm font-bold" style={{color:txt}}>{item.date}</p><span className={`px-2.5 py-1 rounded-xl text-xs font-bold ${cfg.color} ${cfg.bg}`}>{cfg.label}</span></div>
+              <button key={item.id} type="button" onClick={()=>openAttDetail(item)} className="rounded-2xl p-4 w-full text-left hover:opacity-90 active:scale-[0.99] transition-all" style={glass}>
+                <div className="flex items-start gap-3 mb-3">
+                  {thumb ? (
+                    <img src={thumb} alt="" className="w-14 h-14 rounded-xl object-cover flex-shrink-0 border" style={{ borderColor: divC }} />
+                  ) : (
+                    <div className="w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "rgba(99,102,241,0.12)" }}><ClipboardList className="w-6 h-6 text-indigo-400" /></div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-bold" style={{color:txt}}>{item.date}</p>
+                      <span className={`px-2.5 py-1 rounded-xl text-xs font-bold flex-shrink-0 ${cfg.color} ${cfg.bg}`}>{cfg.label}</span>
+                    </div>
+                    <p className="text-xs mt-1" style={{ color: dim }}>Ketuk untuk lihat detail & foto</p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 flex-shrink-0 mt-1" style={{ color: dim }} />
+                </div>
                 <div className="grid grid-cols-3 gap-2">{[["Masuk",formatCheckIn(item.checkIn)],["Keluar",formatCheckOut(item.checkOut)],["Lokasi",item.location??"—"]].map(([l,v])=>(<div key={l}><p className="text-xs" style={{color:dim}}>{l}</p><p className="text-sm font-bold mt-0.5 truncate" style={{color:l==="Keluar"&&!item.checkOut?dim:txt,fontFamily:l!=="Lokasi"?"'JetBrains Mono',monospace":undefined}}>{v}</p></div>))}</div>
-              </div>
+              </button>
             );
           })}
         </div>
       </div>
       <BottomNav/>
+      <AttDetailModal />
     </div>
   );
   }
@@ -980,18 +1118,19 @@ export default function PayrollInApp() {
       }
       setFormSubmitting(true);
       try {
-        const created = await createLeave({
+        await createLeave({
           leaveType: LEAVE_TYPE_TO_API[leaveForm.type],
           reason: leaveForm.reason,
           startDate: leaveForm.startDate,
           endDate: leaveForm.endDate,
           attachment: attached ? "lampiran.pdf" : undefined,
         });
-        setLeaveList((l) => [created, ...l]);
+        await loadLeaves();
         setLeaveForm({ type: "Sakit", startDate: "", endDate: "", reason: "", notes: "" });
         setAttached(false);
+        setLeaveTypeF("all");
+        setLeaveFilter("all");
         setScreen("leave");
-        setLeaveFilter("pending");
       } catch (err) {
         setAbsenNotice(err instanceof Error ? err.message : "Gagal mengirim permohonan");
       } finally {
@@ -1124,9 +1263,6 @@ export default function PayrollInApp() {
     );
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // ── LEAVE LIST ───────────────────────────────────────────────
-  // ══════════════════════════════════════════════════════════════
   if (screen==="leave") {
     const statusTabs:[typeof leaveFilter,string][]=[["all","Semua"],["pending","Menunggu"],["approved","Disetujui"],["rejected","Ditolak"],["draft","Draft"]];
     const visible=leaveList.filter(l=>{
@@ -1347,15 +1483,15 @@ export default function PayrollInApp() {
       if(total<=0)return;
       setFormSubmitting(true);
       try {
-        const created = await createReimbursement({
+        await createReimbursement({
           title: reimForm.purpose,
           description: reimForm.project || undefined,
           amount: total,
         });
-        setReimList(l=>[created,...l]);
+        await loadReimbursements();
         setReimForm({date:"",project:"",purpose:"",advance:"",items:[{desc:"",amount:""}]});
+        setReimFilter("all");
         setScreen("reimbursement");
-        setReimFilter("in-progress");
       } catch (err) {
         setAbsenNotice(err instanceof Error ? err.message : "Gagal menyimpan pengajuan");
       } finally {
