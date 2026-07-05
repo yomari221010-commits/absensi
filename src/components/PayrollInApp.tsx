@@ -1591,6 +1591,13 @@ export default function PayrollInApp() {
             </div>
           </div>
 
+          {isAdmin && !adminView && (
+            <div className="mx-5 mb-4 px-4 py-3 rounded-2xl flex items-center justify-between gap-3" style={{background:"rgba(245,158,11,0.12)",border:"1px solid rgba(245,158,11,0.3)"}}>
+              <p className="text-xs font-medium" style={{color:txt}}>Mode personal. Untuk approve reimbursement karyawan, ketuk ikon <Users className="w-3.5 h-3.5 inline"/> atau tombol di bawah.</p>
+              <button type="button" onClick={()=>setAdminView(true)} className="flex-shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold text-white" style={{background:"linear-gradient(135deg,#4338ca,#6d28d9)"}}>Mode Admin</button>
+            </div>
+          )}
+
           {isAdmin && adminView ? (
             <div className="px-5 flex flex-col gap-4">
               <div className="grid grid-cols-2 gap-3">
