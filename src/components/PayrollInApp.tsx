@@ -300,6 +300,7 @@ export default function PayrollInApp() {
     try {
       await updateLeaveDecision(parseReqId(reqId), status);
       await loadLeaves();
+      setAbsenNotice(status === "approved" ? "Pengajuan izin disetujui" : "Pengajuan izin ditolak");
     } catch (err) {
       setAbsenNotice(err instanceof Error ? err.message : "Gagal memperbarui status izin");
     }
@@ -309,6 +310,7 @@ export default function PayrollInApp() {
     try {
       await updateReimbursementDecision(parseReimId(reimId), status);
       await loadReimbursements();
+      setAbsenNotice(status === "approved" ? "Reimbursement disetujui" : "Reimbursement ditolak");
     } catch (err) {
       setAbsenNotice(err instanceof Error ? err.message : "Gagal memperbarui status reimbursement");
     }
@@ -347,7 +349,11 @@ export default function PayrollInApp() {
     if (screen === "notifications") loadNotifications();
     if (screen === "home" || screen === "leave") loadLeaves();
     if (screen === "home" || screen === "reimbursement") loadReimbursements();
-    if (screen === "admin") loadAdminDashboard();
+    if (screen === "admin") {
+      loadAdminDashboard();
+      loadLeaves();
+      loadReimbursements();
+    }
   }, [screen]);
 
   useEffect(() => {
@@ -380,7 +386,17 @@ export default function PayrollInApp() {
   const navigate = (tab: string) => {
     setActiveTab(tab);
     const map: Record<string,Screen> = { home:"home", attendance:"attendance", history:"history", profile:"profile", reimbursement:"reimbursement", leave:"leave" };
-    setScreen(map[tab] ?? "home");
+    const next = map[tab] ?? "home";
+    if (isAdmin && (next === "leave" || next === "reimbursement")) {
+      setAdminView(true);
+    }
+    setScreen(next);
+  };
+
+  const goAdminApprovals = (target: "leave" | "reimbursement") => {
+    setAdminView(true);
+    setActiveTab(target);
+    setScreen(target);
   };
   const goNotif = () => { setPrevScreen(screen); setScreen("notifications"); };
   const doAbsen = (type: "masuk"|"keluar") => { setCameraBack(screen); setAbsenType(type); setScreen("camera"); };
@@ -552,6 +568,19 @@ export default function PayrollInApp() {
       {darkMode ? <Sun className="w-4 h-4 text-amber-400"/> : <Moon className="w-4 h-4 text-slate-500"/>}
     </button>
   );
+  const NoticeBanner = () => {
+    if (!absenNotice) return null;
+    const isError = absenNotice.toLowerCase().includes("gagal") || absenNotice.toLowerCase().includes("error") || absenNotice.includes("luar radius");
+    return (
+      <div className="mx-5 mt-3 mb-1 px-4 py-3 rounded-2xl flex items-center gap-3" style={{
+        background: isError ? "rgba(239,68,68,0.15)" : "rgba(16,185,129,0.15)",
+        border: `1px solid ${isError ? "rgba(239,68,68,0.35)" : "rgba(16,185,129,0.35)"}`,
+      }}>
+        {isError ? <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0"/> : <CheckCircle className="w-5 h-5 text-emerald-400 flex-shrink-0"/>}
+        <p className={`text-sm font-bold ${isError ? "text-red-400" : "text-emerald-400"}`}>{absenNotice}</p>
+      </div>
+    );
+  };
   const Header = ({ title, back, right, hideBell }:{ title:string; back?:()=>void; right?:React.ReactNode; hideBell?:boolean }) => (
     <div className="flex items-center justify-between px-5 pt-12 pb-4 flex-shrink-0">
       {back ? <button onClick={back} className="w-10 h-10 flex items-center justify-center rounded-xl hover:opacity-80" style={glass}><ArrowLeft className="w-5 h-5" style={{color:txt}}/></button> : <div className="w-10"/>}
@@ -1277,6 +1306,7 @@ export default function PayrollInApp() {
     return (
       <div className="size-full flex flex-col overflow-hidden" style={{background:bgPage}}>
         <div className="flex-1 overflow-y-auto pb-32">
+          <NoticeBanner />
           {/* Header with admin toggle */}
           <div className="flex items-center justify-between px-5 pt-12 pb-4 flex-shrink-0">
             <div className="w-10"/>
@@ -1290,6 +1320,13 @@ export default function PayrollInApp() {
               <BellBtn/>
             </div>
           </div>
+
+          {isAdmin && !adminView && (
+            <div className="mx-5 mb-4 px-4 py-3 rounded-2xl flex items-center justify-between gap-3" style={{background:"rgba(245,158,11,0.12)",border:"1px solid rgba(245,158,11,0.3)"}}>
+              <p className="text-xs font-medium" style={{color:txt}}>Mode personal. Untuk approve izin karyawan, ketuk ikon <Users className="w-3.5 h-3.5 inline"/> di kanan atas.</p>
+              <button type="button" onClick={()=>setAdminView(true)} className="flex-shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold text-white" style={{background:"linear-gradient(135deg,#4338ca,#6d28d9)"}}>Mode Admin</button>
+            </div>
+          )}
 
           {/* ── USER VIEW ── */}
           {!adminView && (
@@ -1540,6 +1577,7 @@ export default function PayrollInApp() {
     return (
       <div className="size-full flex flex-col overflow-hidden" style={{background:bgPage}}>
         <div className="flex-1 overflow-y-auto pb-32">
+          <NoticeBanner />
           <div className="flex items-center justify-between px-5 pt-12 pb-4 flex-shrink-0">
             <div className="w-10"/>
             <h1 className="text-base font-bold" style={{color:txt}}>{isAdmin && adminView ? "Tim · Reimbursement" : "Reimbursement"}</h1>
@@ -1663,10 +1701,35 @@ export default function PayrollInApp() {
     const stats=[{label:"Total Karyawan",value:String(totalEmp),badge:totalEmp > 0 ? "aktif" : "—",color:"#6366f1",bg:"rgba(99,102,241,0.15)",Icon:Users},{label:"Hadir",value:String(ts.hadir),badge:pct(ts.hadir),color:"#10b981",bg:"rgba(16,185,129,0.15)",Icon:CheckCircle},{label:"Telat",value:String(ts.telat),badge:pct(ts.telat),color:"#f59e0b",bg:"rgba(245,158,11,0.15)",Icon:Clock},{label:"Izin/Cuti",value:String(izinCuti),badge:pct(izinCuti),color:"#8b5cf6",bg:"rgba(139,92,246,0.15)",Icon:Shield},{label:"Tidak Hadir",value:String(ts.absent),badge:pct(ts.absent),color:"#ef4444",bg:"rgba(239,68,68,0.15)",Icon:X}];
     const tt={background:darkMode?"#0f172a":"#fff",border:"1px solid rgba(99,102,241,0.2)",borderRadius:12,color:txt,fontSize:12};
     const adminDateStr = now.toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    const pendingLeaveCount = dash?.pendingLeaves ?? leaveList.filter(l => l.status === "pending").length;
+    const pendingReimCount = dash?.pendingReimbursements ?? reimList.filter(r => r.status === "in-progress").length;
     return (
       <div className="size-full flex flex-col overflow-hidden" style={{background:bgPage}}>
-        <div className="flex-1 overflow-y-auto pb-8">
+        <div className="flex-1 overflow-y-auto pb-28">
           <Header title="Admin Dashboard" back={()=>{setScreen("home");setActiveTab("home");}} right={<DarkBtn/>}/>
+          <NoticeBanner />
+          {/* Persetujuan pending */}
+          <div className="px-5 mb-5">
+            <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{color:sub}}>Butuh Persetujuan</p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <button type="button" onClick={()=>goAdminApprovals("leave")} className="rounded-2xl p-4 text-left hover:opacity-90 active:scale-[0.99] transition-all" style={{...glass,borderLeft:"3px solid #f59e0b"}}>
+                <div className="flex items-center justify-between mb-2">
+                  <CalendarCheck className="w-5 h-5 text-amber-400"/>
+                  <span className="px-2.5 py-1 rounded-xl text-xs font-black text-amber-400" style={{background:"rgba(245,158,11,0.15)"}}>{pendingLeaveCount} pending</span>
+                </div>
+                <p className="text-sm font-bold" style={{color:txt}}>Persetujuan Izin & Cuti</p>
+                <p className="text-xs mt-1" style={{color:sub}}>Ketuk untuk setujui / tolak pengajuan karyawan</p>
+              </button>
+              <button type="button" onClick={()=>goAdminApprovals("reimbursement")} className="rounded-2xl p-4 text-left hover:opacity-90 active:scale-[0.99] transition-all" style={{...glass,borderLeft:"3px solid #10b981"}}>
+                <div className="flex items-center justify-between mb-2">
+                  <Receipt className="w-5 h-5 text-emerald-400"/>
+                  <span className="px-2.5 py-1 rounded-xl text-xs font-black text-emerald-400" style={{background:"rgba(16,185,129,0.15)"}}>{pendingReimCount} pending</span>
+                </div>
+                <p className="text-sm font-bold" style={{color:txt}}>Persetujuan Reimbursement</p>
+                <p className="text-xs mt-1" style={{color:sub}}>Ketuk untuk setujui / tolak klaim biaya</p>
+              </button>
+            </div>
+          </div>
           <div className="px-5 mb-5"><p className="text-xs" style={{color:sub}}>Rekap: <span style={{color:"#6366f1",fontWeight:700}}>{adminDateStr}</span></p></div>
           <div className="px-5 mb-5"><div className="grid grid-cols-2 gap-3 lg:grid-cols-5">{stats.map(({label,value,badge,color,bg,Icon})=>(<div key={label} className="rounded-2xl p-4" style={{...glass,borderLeft:`3px solid ${color}`}}><div className="w-9 h-9 rounded-xl flex items-center justify-center mb-3" style={{background:bg,color}}><Icon className="w-4 h-4"/></div><p className="text-2xl font-black" style={{color}}>{value}</p><p className="text-xs font-bold mt-0.5" style={{color:txt}}>{label}</p><p className="text-xs mt-1" style={{color}}>{badge}</p></div>))}</div></div>
           <div className="px-5 mb-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1686,6 +1749,7 @@ export default function PayrollInApp() {
             </div>
           </div>
         </div>
+        <BottomNav/>
       </div>
     );
   }
